@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: goji-license
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn goji_server:app --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 120
+    healthCheckPath: /healthz
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OWNER_PASS
+        sync: false
+      - key: OWNER_HANDLE
+        value: "@Goji_Pogi"
+      - key: BRAND
+        value: "GOJI"
+      - key: HMAC_SALT
+        value: "goji-warpshield-2026"

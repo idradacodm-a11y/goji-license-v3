@@ -1,0 +1,35 @@
+name: Build Protected Client
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'goji_client.py'
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyArmor
+        run: pip install pyarmor
+
+      - name: Protect client
+        run: |
+          pyarmor gen --output dist --recursive \
+            --enable-jit --enable-bcc --mix-str \
+            goji_client.py
+
+      - name: Upload protected build
+        uses: actions/upload-artifact@v4
+        with:
+          name: goji-client-protected
+          path: dist/
+          retention-days: 30

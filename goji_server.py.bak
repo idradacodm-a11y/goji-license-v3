@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# ============================================================
+#  GOJI LICENSE SERVER · V2
+#  @Goji_Pogi
+# ============================================================
+
+import os, json, time, secrets, string, threading, hashlib, hmac
+from datetime import datetime
+from functools import wraps
+from flask import (Flask, request, jsonify, render_template, session,
+                   redirect, url_for)
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+OWNER_PASS   = os.environ.get('OWNER_PASS', 'change-me-now')
+OWNER_HANDLE = os.environ.get('OWNER_HANDLE', '@Goji_Pogi')
+BRAND        = os.environ.get('BRAND', 'GOJI')
+HMAC_SALT    = os.environ.get('HMAC_SALT', 'goji-warpshield-2026')
+
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
+_lk = threading.Lock()
+_seen_nonces = {}
+_nonce_lock = threading.Lock()
+
+def _load():
+    if not os.path.exists(DATA_FILE):
+        return {'devices':{},'keys':{},'meta':{'created':time.time(),'mode':'primary'}}
+    try:
+        with open(DATA_FILE,'r',encoding='utf-8') as f: d = json.load(f)
+        d.setdefault('devices',{}); d.setdefault('keys',{}); d.setdefault('meta',{})
+        d['meta'].setdefault('mode','primary')
+        return d
+    except Exception:
+        return {'devices':{},'keys':{},'meta':{'mode':'primary'}}
+
+def _save(d):
+    try:
+        with open(DATA_FILE,'w',encoding='utf-8') as f: json.dump(d, f, indent=2)
+    except Exception: pass
+
+def _now(): return time.time()
+
+def _fmt(ts):
+    if not ts: return 'never'
+    try: return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
+    except Exception: return '?'
+
+ALPHA = string.ascii_lowercase
+
+def _owner_req(f):
+    @wraps(f)
+    def w(*a, **kw):
+        if not session.get('owner'): return redirect(url_for('login'))
+        return f(*a, **kw)
+    return w
+
+def _verify_sig(payload):
+    try:
+        sig = payload.pop('sig', None)
+        n = payload.get('n','')
+        fp = payload.get('fp','')
+        if not sig or not n: return False
+        with _nonce_lock:
+            nt = time.time()
+            if n in _seen_nonces: return False
+            _seen_nonces[n] = nt
+            for k in list(_seen_nonces):
+                if nt - _seen_nonces[k] > 300: del _seen_nonces[k]
+        msg = json.dumps(payload, sort_keys=True)+'|'+n+'|'+fp
+        expect = hmac.new(HMAC_SALT.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
+        return hmac.compare_digest(sig, expect)
+    except Exception: return False
+
+@app.route('/api/ping', methods=['POST'])
+def api_ping():
+    data = request.get_json(silent=True) or {}
+    _verify_sig(data)
+    with _lk:
+        d = _load(); mode = d['meta'].get('mode','primary')
+    return jsonify({
+        'on': mode != 'locked',
+        'mode': mode,
+        'msg': {'primary':'operational','backup':'backup mode','locked':'server locked'}.get(mode,'?'),
+    })
+
+@app.route('/api/verify', methods=['POST'])
+def api_verify():
+    data = request.get_json(silent=True) or {}
+    if not _verify_sig(data):
+        return jsonify({'status':'error','msg':'bad signature'}), 403
+    dev = (data.get('device_id') or '').strip().upper()
+    key = (data.get('key') or '').strip().lower()
+    if not dev or len(dev) != 8:
+        return jsonify({'status':'error','msg':'invalid device id'})
+    with _lk:
+        d = _load(); n = _now(); mode = d['meta'].get('mode','primary')
+        if mode == 'locked':
+            return jsonify({'status':'error','msg':'server locked'})
+        if mode == 'backup':
+            return jsonify({'status':'backup','device_id':dev,'msg':'use backup'})
+        dv = d['devices'].get(dev, {
+            'device_id':dev,'first_seen':n,'last_seen':n,
+            'key':None,'status':'unknown',
+            'ip':request.remote_addr or '?',
+            'user_agent':request.headers.get('User-Agent','')[:120],
+        })
+        dv['last_seen'] = n
+        dv['ip'] = request.remote_addr or dv.get('ip','?')
+        d['devices'][dev] = dv
+        if dv.get('status') == 'kicked':
+            _save(d); return jsonify({'status':'revoked','device_id':dev})
+        if not key:
+            if dv.get('key') and dv['key'] in d['keys']:
+                key = dv['key']
+            else:
+                _save(d); return jsonify({'status':'no_key','device_id':dev})
+        k = d['keys'].get(key)
+        if not k:
+            _save(d); return jsonify({'status':'error','device_id':dev,'msg':'invalid key'})
+        if k.get('revoked'):
+            _save(d); return jsonify({'status':'revoked','device_id':dev})
+        bound = k.get('device_id')
+        if bound and bound != dev:
+            _save(d); return jsonify({'status':'mismatch','device_id':dev})
+        exp = k.get('expires')
+        if exp and n > exp:
+            _save(d); return jsonify({'status':'expired','device_id':dev,'expires':exp})
+        if not bound:
+            k['device_id'] = dev; k['bound_at'] = n
+        k['last_check'] = n
+        dv['key'] = key; dv['status'] = 'authorized'
+        _save(d)
+        return jsonify({'status':'ok','device_id':dev,
+                        'tier':k.get('tier','standard'),'expires':exp})
+
+@app.route('/healthz')
+def healthz(): return 'ok', 200
+
+@app.route('/')
+def index():
+    if session.get('owner'): return redirect(url_for('panel'))
+    return redirect(url_for('login'))
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    err = None
+    if request.method == 'POST':
+        if request.form.get('pw','') == OWNER_PASS:
+            session['owner'] = True
+            return redirect(url_for('panel'))
+        err = 'wrong password'
+    return render_template('login.html', brand=BRAND, err=err)
+
+@app.route('/logout')
+def logout():
+    session.clear(); return redirect(url_for('login'))
+
+@app.route('/panel')
+@_owner_req
+def panel():
+    with _lk: d = _load()
+    devices = list(d['devices'].values())
+    keys = list(d['keys'].values())
+    n = _now(); mode = d['meta'].get('mode','primary')
+    devices.sort(key=lambda x: x.get('last_seen',0), reverse=True)
+    keys.sort(key=lambda x: x.get('created',0), reverse=True)
+    stats = {
+        'total_dev': len(devices),
+        'active_dev': sum(1 for x in devices if x.get('status')=='authorized'),
+        'kicked_dev': sum(1 for x in devices if x.get('status')=='kicked'),
+        'total_keys': len(keys),
+        'active_keys': sum(1 for x in keys if not x.get('revoked') and
+                          (not x.get('expires') or x['expires'] > n)),
+        'revoked_keys': sum(1 for x in keys if x.get('revoked')),
+    }
+    return render_template('panel.html', brand=BRAND, handle=OWNER_HANDLE,
+        mode=mode, devices=devices, keys=keys, stats=stats, now=n, fmt=_fmt)
+
+@app.route('/api/panel/mode', methods=['POST'])
+@_owner_req
+def api_mode():
+    data = request.get_json() or {}
+    mode = data.get('mode','primary')
+    if mode not in ('primary','backup','locked'): mode = 'primary'
+    with _lk:
+        d = _load(); d['meta']['mode'] = mode; d['meta']['updated'] = _now(); _save(d)
+    return jsonify({'ok':True,'mode':mode})
+
+@app.route('/api/panel/gen', methods=['POST'])
+@_owner_req
+def api_gen():
+    data = request.get_json() or {}
+    tier = data.get('tier','standard')
+    try: count = max(1, min(50, int(data.get('count',1))))
+    except (TypeError, ValueError): count = 1
+    days = data.get('days'); note = (data.get('note') or '')[:80]
+    created = []
+    with _lk:
+        d = _load(); n = _now()
+        for _ in range(count):
+            for _t in range(100):
+                k = '-'.join(''.join(secrets.choice(ALPHA) for _ in range(3)) for _ in range(3))
+                if k not in d['keys']: break
+            d['keys'][k] = {'key':k,'tier':tier,'created':n,
+                'expires':(n+int(days)*86400) if days else None,
+                'note':note,'device_id':None,'revoked':False}
+            created.append(k)
+        _save(d)
+    return jsonify({'ok':True,'keys':created})
+
+@app.route('/api/panel/revoke', methods=['POST'])
+@_owner_req
+def api_revoke():
+    key = (request.get_json() or {}).get('key','').strip().lower()
+    with _lk:
+        d = _load()
+        if key not in d['keys']: return jsonify({'ok':False}), 404
+        d['keys'][key]['revoked'] = True
+        d['keys'][key]['revoked_at'] = _now()
+        bd = d['keys'][key].get('device_id')
+        if bd and bd in d['devices']:
+            d['devices'][bd]['status'] = 'revoked'
+            d['devices'][bd]['key'] = None
+        _save(d)
+    return jsonify({'ok':True})
+
+@app.route('/api/panel/unrevoke', methods=['POST'])
+@_owner_req
+def api_unrevoke():
+    key = (request.get_json() or {}).get('key','').strip().lower()
+    with _lk:
+        d = _load()
+        if key not in d['keys']: return jsonify({'ok':False}), 404
+        d['keys'][key]['revoked'] = False
+        d['keys'][key].pop('revoked_at', None)
+        _save(d)
+    return jsonify({'ok':True})
+
+@app.route('/api/panel/kick', methods=['POST'])
+@_owner_req
+def api_kick():
+    dev = (request.get_json() or {}).get('device_id','').strip().upper()
+    with _lk:
+        d = _load()
+        if dev not in d['devices']: return jsonify({'ok':False}), 404
+        d['devices'][dev]['status'] = 'kicked'
+        k = d['devices'][dev].get('key')
+        if k and k in d['keys']:
+            d['keys'][k]['revoked'] = True
+            d['keys'][k]['revoked_at'] = _now()
+        d['devices'][dev]['key'] = None
+        _save(d)
+    return jsonify({'ok':True})
+
+@app.route('/api/panel/unkick', methods=['POST'])
+@_owner_req
+def api_unkick():
+    dev = (request.get_json() or {}).get('device_id','').strip().upper()
+    with _lk:
+        d = _load()
+        if dev in d['devices']:
+            d['devices'][dev]['status'] = 'unknown'
+            _save(d)
+    return jsonify({'ok':True})
+
+@app.route('/api/panel/delete-device', methods=['POST'])
+@_owner_req
+def api_del_dev():
+    dev = (request.get_json() or {}).get('device_id','').strip().upper()
+    with _lk:
+        d = _load(); d['devices'].pop(dev, None); _save(d)
+    return jsonify({'ok':True})
+
+@app.route('/api/panel/delete-key', methods=['POST'])
+@_owner_req
+def api_del_key():
+    key = (request.get_json() or {}).get('key','').strip().lower()
+    with _lk:
+        d = _load(); d['keys'].pop(key, None); _save(d)
+    return jsonify({'ok':True})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

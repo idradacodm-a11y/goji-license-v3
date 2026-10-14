@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ brand }} · master</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='master.css') }}"></head>
+<body class="auth-body">
+<div class="aurora"></div>
+<div class="auth-wrap"><div class="auth-card">
+  <div class="logo-mark">🔐</div>
+  <span class="master-badge">MASTER ACCESS</span>
+  <h1 class="logo-title">{{ brand }}</h1>
+  <p class="logo-sub">HIDDEN VAULT</p>
+  <form method="post" action="/master/login" autocomplete="off">
+    <label class="field"><span class="field-label">Master Password</span>
+    <input name="pw" type="password" autofocus required></label>
+    <button type="submit" class="btn-danger">Enter Vault</button>
+    {% if err %}<p class="err">✗ {{ err }}</p>{% endif %}
+  </form>
+  <p class="foot">{{ brand }} · master</p>
+</div></div></body></html>

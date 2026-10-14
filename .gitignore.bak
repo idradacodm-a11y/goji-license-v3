@@ -1,0 +1,13 @@
+cat > .gitignore << 'EOF'
+__pycache__/
+*.pyc
+*.pyo
+.goji/
+dist/
+build/
+data.json
+*.log
+.env
+venv/
+.venv/
+EOF

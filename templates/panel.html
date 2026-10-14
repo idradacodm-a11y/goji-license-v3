@@ -1,0 +1,191 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ brand }} · panel</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}"></head>
+<body>
+<div class="aurora"></div>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">◆</span>
+    <span class="brand-name">{{ brand }}</span>
+    <span class="brand-tag">panel</span></div>
+  <nav class="topnav">
+    <button class="tab active" data-tab="devices">Devices</button>
+    <button class="tab" data-tab="keys">Keys</button>
+    <button class="tab" data-tab="gen">Generator</button>
+  </nav>
+  <a href="{{ url_for('logout') }}" class="link-quiet">logout</a>
+</header>
+<main class="container">
+
+<div class="mode-wrap">
+  <div class="mode-info">
+    <div class="mode-title">
+      {% if mode == 'primary' %}● PRIMARY MODE
+      {% elif mode == 'backup' %}◆ BACKUP MODE
+      {% else %}⊘ LOCKED{% endif %}
+    </div>
+    <div class="mode-sub">
+      {% if mode == 'primary' %}clients verify via server · keys required
+      {% elif mode == 'backup' %}owner fallback · server bypassed
+      {% else %}nothing runs — even owner{% endif %}
+    </div>
+  </div>
+  <div class="mode-btns">
+    <button class="m-btn {{ 'active' if mode=='primary' else '' }}" onclick="setMode('primary')">primary</button>
+    <button class="m-btn {{ 'active' if mode=='backup' else '' }}" onclick="setMode('backup')">backup</button>
+    <button class="m-btn err {{ 'active' if mode=='locked' else '' }}" onclick="setMode('locked')">locked</button>
+  </div>
+</div>
+
+<section class="stats-grid">
+  <div class="stat-card"><div class="stat-val">{{ stats.total_dev }}</div><div class="stat-lbl">devices</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--acc)">{{ stats.active_dev }}</div><div class="stat-lbl">active</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--err)">{{ stats.kicked_dev }}</div><div class="stat-lbl">kicked</div></div>
+  <div class="stat-card"><div class="stat-val">{{ stats.total_keys }}</div><div class="stat-lbl">keys</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--acc)">{{ stats.active_keys }}</div><div class="stat-lbl">active</div></div>
+  <div class="stat-card"><div class="stat-val" style="color:var(--err)">{{ stats.revoked_keys }}</div><div class="stat-lbl">revoked</div></div>
+</section>
+
+<section class="panel active" id="tab-devices">
+  <h2 class="panel-title">Devices <span class="dim">({{ devices|length }})</span></h2>
+  {% if devices %}
+  <div class="table-wrap"><table class="dtable"><thead><tr>
+    <th>Device ID</th><th>Status</th><th>Key</th><th>First</th>
+    <th>Last</th><th>IP</th><th>Actions</th></tr></thead><tbody>
+  {% for d in devices %}
+    <tr>
+      <td class="mono"><b>{{ d.device_id }}</b></td>
+      <td>{% if d.status == 'authorized' %}<span class="badge ok">authorized</span>
+          {% elif d.status == 'kicked' %}<span class="badge err">kicked</span>
+          {% elif d.status == 'revoked' %}<span class="badge err">revoked</span>
+          {% else %}<span class="badge warn">unknown</span>{% endif %}</td>
+      <td class="mono">{{ d.key or '—' }}</td>
+      <td class="dim">{{ fmt(d.first_seen) }}</td>
+      <td class="dim">{{ fmt(d.last_seen) }}</td>
+      <td class="mono dim">{{ d.ip or '—' }}</td>
+      <td>
+        {% if d.status == 'kicked' %}
+          <button class="btn-xs ok" onclick="unkick('{{ d.device_id }}')">unkick</button>
+        {% else %}
+          <button class="btn-xs err" onclick="kick('{{ d.device_id }}')">kick</button>
+        {% endif %}
+        <button class="btn-xs" onclick="delDev('{{ d.device_id }}')">✗</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="empty">no devices</p>{% endif %}
+</section>
+
+<section class="panel" id="tab-keys">
+  <h2 class="panel-title">Keys <span class="dim">({{ keys|length }})</span></h2>
+  {% if keys %}
+  <div class="table-wrap"><table class="dtable"><thead><tr>
+    <th>Key</th><th>Tier</th><th>Status</th><th>Bound</th>
+    <th>Expires</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+  {% for k in keys %}
+    <tr>
+      <td class="mono"><b>{{ k.key }}</b></td>
+      <td>{{ k.tier or 'standard' }}</td>
+      <td>{% if k.revoked %}<span class="badge err">revoked</span>
+          {% elif k.expires and k.expires < now %}<span class="badge warn">expired</span>
+          {% elif k.device_id %}<span class="badge ok">active</span>
+          {% else %}<span class="badge">unused</span>{% endif %}</td>
+      <td class="mono dim">{{ k.device_id or '—' }}</td>
+      <td class="dim">{{ fmt(k.expires) }}</td>
+      <td class="dim">{{ fmt(k.created) }}</td>
+      <td>
+        {% if k.revoked %}
+          <button class="btn-xs ok" onclick="unrevoke('{{ k.key }}')">unrevoke</button>
+        {% else %}
+          <button class="btn-xs err" onclick="revoke('{{ k.key }}')">revoke</button>
+        {% endif %}
+        <button class="btn-xs" onclick="copyT('{{ k.key }}')">copy</button>
+        <button class="btn-xs" onclick="delKey('{{ k.key }}')">✗</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="empty">no keys</p>{% endif %}
+</section>
+
+<section class="panel" id="tab-gen">
+  <h2 class="panel-title">Key Generator</h2>
+  <div class="form-card">
+    <div class="form-row">
+      <label class="field"><span class="field-label">Tier</span>
+        <select id="gTier">
+          <option value="standard">standard</option>
+          <option value="premium">premium</option>
+          <option value="vip">vip</option>
+        </select></label>
+      <label class="field"><span class="field-label">Count</span>
+        <input id="gCount" type="number" value="5" min="1" max="50"></label>
+      <label class="field"><span class="field-label">Days (blank=never)</span>
+        <input id="gDays" type="number" min="1" placeholder="30"></label>
+      <label class="field"><span class="field-label">Note</span>
+        <input id="gNote" placeholder="optional"></label>
+    </div>
+    <button class="btn-primary" onclick="gen()">Generate Keys</button>
+    <div id="genOut" class="gen-out"></div>
+  </div>
+</section>
+
+</main>
+<div id="toast" class="toast"></div>
+
+<script>
+function toast(m, k='info') {
+  const t = document.getElementById('toast');
+  t.textContent = m; t.className = 'toast show ' + k;
+  setTimeout(() => t.className = 'toast', 2200);
+}
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+}));
+async function api(p, d) {
+  return (await fetch(p, {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify(d||{})})).json();
+}
+async function setMode(m) {
+  if (!confirm('switch to ' + m + ' mode?')) return;
+  const r = await api('/api/panel/mode', {mode: m});
+  if (r.ok) { toast('mode → ' + m, 'ok'); setTimeout(() => location.reload(), 500); }
+}
+async function gen() {
+  const tier = document.getElementById('gTier').value;
+  const count = parseInt(document.getElementById('gCount').value) || 1;
+  const days = document.getElementById('gDays').value;
+  const note = document.getElementById('gNote').value;
+  const out = document.getElementById('genOut');
+  out.innerHTML = '<span class="dim">generating…</span>';
+  const r = await api('/api/panel/gen', {tier, count, days: days?parseInt(days):null, note});
+  if (r.ok) {
+    out.innerHTML = r.keys.map(k => `<div class="key-line"><code>${k}</code>
+      <button class="btn-xs" onclick="copyT('${k}')">copy</button></div>`).join('');
+    toast('generated ' + r.keys.length, 'ok');
+    setTimeout(() => location.reload(), 1500);
+  } else out.innerHTML = '<span style="color:var(--err)">failed</span>';
+}
+async function revoke(k) { if(!confirm('revoke '+k+'?'))return;
+  const r = await api('/api/panel/revoke', {key:k});
+  if (r.ok) { toast('revoked','ok'); setTimeout(()=>location.reload(),500); } }
+async function unrevoke(k) { const r = await api('/api/panel/unrevoke', {key:k});
+  if (r.ok) { toast('unrevoked','ok'); setTimeout(()=>location.reload(),500); } }
+async function kick(d) { if(!confirm('kick '+d+'?'))return;
+  const r = await api('/api/panel/kick', {device_id:d});
+  if (r.ok) { toast('kicked','ok'); setTimeout(()=>location.reload(),500); } }
+async function unkick(d) { const r = await api('/api/panel/unkick', {device_id:d});
+  if (r.ok) { toast('unkicked','ok'); setTimeout(()=>location.reload(),500); } }
+async function delDev(d) { if(!confirm('delete '+d+'?'))return;
+  const r = await api('/api/panel/delete-device', {device_id:d});
+  if (r.ok) { toast('deleted','ok'); setTimeout(()=>location.reload(),500); } }
+async function delKey(k) { if(!confirm('delete '+k+'?'))return;
+  const r = await api('/api/panel/delete-key', {key:k});
+  if (r.ok) { toast('deleted','ok'); setTimeout(()=>location.reload(),500); } }
+function copyT(t) { navigator.clipboard.writeText(t).then(()=>toast('copied','ok')); }
+</script>
+</body></html>

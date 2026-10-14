@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.goji/
+dist/
+build/
+data.json
+*.log
+.env
+venv/
+.venv/
