@@ -1,0 +1,119 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ brand }} · vault</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='master.css') }}"></head>
+<body>
+<div class="aurora"></div>
+<header class="master-header">
+  <div class="master-bar">
+    <span class="master-icon">🔐</span>
+    <div>
+      <div class="master-title">{{ brand }} · VAULT</div>
+      <div class="master-tag">HIDDEN · MASTER ONLY</div>
+    </div>
+    <a href="/master/logout" class="link-quiet">logout</a>
+  </div>
+</header>
+<main class="container">
+  {% if owner_lock %}
+  <div class="danger-card locked">
+    <div class="danger-title">⚠ OWNER PANEL LOCKED</div>
+    <div class="danger-desc">
+      <b>Reason:</b> {{ owner_lock_reason }}<br>
+      <b>Locked at:</b> {{ fmt(owner_lock_at) }}
+    </div>
+    <div class="danger-actions">
+      <button class="btn-danger" onclick="unlockOwner()">🔓 Unlock &amp; Reset Tracker</button>
+    </div>
+  </div>
+  {% else %}
+  <div class="danger-card {{ 'warn' if danger else 'ok' }}">
+    <div class="danger-title">{% if danger %}⚠ DANGER — APPROACHING LIMIT{% else %}✓ OWNER PANEL ACTIVE{% endif %}</div>
+    <div class="danger-desc">Unique devices used owner pass: <b class="num">{{ unique_count }}</b> / {{ max_hits }}</div>
+    <div class="meter"><div class="meter-fill" style="width:{{ (unique_count / max_hits * 100)|round(1) }}%"></div></div>
+    <div class="danger-actions">
+      <button class="btn-danger outline" onclick="resetTracker()">↺ Reset Tracker</button>
+      <button class="btn-danger outline" onclick="lockOwner()">🔒 Lock Owner Panel</button>
+    </div>
+  </div>
+  {% endif %}
+  <div class="action-grid">
+    <button class="action-card" onclick="revokeAll()">
+      <span class="action-icon">⚡</span>
+      <span class="action-label">Revoke All Keys</span>
+      <span class="action-hint">patay lahat ng customer</span>
+    </button>
+    <button class="action-card" onclick="kickAll()">
+      <span class="action-icon">💀</span>
+      <span class="action-label">Kick All Devices</span>
+      <span class="action-hint">force logout lahat</span>
+    </button>
+    <button class="action-card" onclick="setMode('locked')">
+      <span class="action-icon">⊘</span>
+      <span class="action-label">Mode → Locked</span>
+      <span class="action-hint">killswitch on</span>
+    </button>
+    <button class="action-card" onclick="setMode('primary')">
+      <span class="action-icon">▶</span>
+      <span class="action-label">Mode → Primary</span>
+      <span class="action-hint">normal ops</span>
+    </button>
+  </div>
+  <h2 class="section-title">OWNER LOGIN HISTORY</h2>
+  {% if logins %}
+  <div class="table-wrap"><table><thead><tr>
+    <th>Time</th><th>IP</th><th>Fingerprint</th><th>User Agent</th></tr></thead><tbody>
+  {% for l in logins %}
+    <tr>
+      <td class="dim">{{ fmt(l.ts) }}</td>
+      <td class="mono">{{ l.ip }}</td>
+      <td class="mono pink">{{ l.fp }}</td>
+      <td class="dim">{{ l.ua[:60] }}{% if l.ua|length > 60 %}…{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="empty">no logins yet</p>{% endif %}
+</main>
+<div id="toast" class="toast"></div>
+<script>
+function toast(m, k='info') {
+  const t = document.getElementById('toast');
+  t.textContent = m; t.className = 'toast show ' + k;
+  setTimeout(() => t.className = 'toast', 2200);
+}
+async function api(p, d) {
+  return (await fetch(p, {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify(d||{})})).json();
+}
+async function unlockOwner() {
+  if (!confirm('unlock owner panel + reset tracker?')) return;
+  const r = await api('/master/api/unlock');
+  if (r.ok) { toast('✓ unlocked', 'ok'); setTimeout(()=>location.reload(), 500); }
+}
+async function lockOwner() {
+  if (!confirm('LOCK owner panel?')) return;
+  const r = await api('/master/api/lock');
+  if (r.ok) { toast('🔒 locked', 'err'); setTimeout(()=>location.reload(), 500); }
+}
+async function resetTracker() {
+  if (!confirm('reset tracker?')) return;
+  const r = await api('/master/api/reset-tracker');
+  if (r.ok) { toast('↺ reset', 'ok'); setTimeout(()=>location.reload(), 500); }
+}
+async function revokeAll() {
+  if (!confirm('REVOKE ALL KEYS? sigurado ka?')) return;
+  const r = await api('/master/api/revoke-all');
+  if (r.ok) { toast('⚡ all revoked', 'err'); setTimeout(()=>location.reload(), 500); }
+}
+async function kickAll() {
+  if (!confirm('KICK ALL DEVICES?')) return;
+  const r = await api('/master/api/kick-all');
+  if (r.ok) { toast('💀 all kicked', 'err'); setTimeout(()=>location.reload(), 500); }
+}
+async function setMode(m) {
+  if (!confirm('mode → ' + m + '?')) return;
+  const r = await api('/master/api/mode', {mode: m});
+  if (r.ok) { toast('mode → ' + m, 'ok'); setTimeout(()=>location.reload(), 500); }
+}
+</script>
+</body></html>
