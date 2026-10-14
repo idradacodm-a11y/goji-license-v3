@@ -31,7 +31,7 @@ from Crypto.Cipher import AES
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ═══ CONFIG — walang pass dito ═══
-SERVER_URL   = os.environ.get('GOJI_SERVER', 'https://goji-license.onrender.com')
+SERVER_URL = os.environ.get('GOJI_SERVER', 'https://goji-license-v3.onrender.com')
 OWNER_HANDLE = '@Goji_Pogi'
 BRAND        = 'GOJI'
 VERSION      = 'V3'
